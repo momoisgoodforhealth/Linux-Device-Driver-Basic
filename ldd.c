@@ -34,9 +34,19 @@ struct proc_ops {
 
 static struct proc_dir_entry *custom_proc_node;
 
-ssize_t shov_read(struct file *, char __user *, size_t, loff_t *) {
-    printk("shovan_read\n");
+ssize_t shov_read(struct file *filp, char __user *buf, size_t count, loff_t *offset) {
+    char msg[] ="Ack\n";
+    size_t len=sizeof(msg);
+        printk("shovan_read\n");
+
+            if (*offset>=len)
     return 0;
+    int result = copy_to_user(buf,msg,len);
+    *offset += len;
+
+
+
+    return len;
 }
 
 struct proc_ops driver_proc_ops = {
