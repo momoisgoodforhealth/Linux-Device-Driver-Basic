@@ -33,6 +33,7 @@ struct proc_ops {
 */ 
 
 static struct proc_dir_entry *custom_proc_node;
+static char kernel_buf[128];
 
 ssize_t shov_read(struct file *filp, char __user *buf, size_t count, loff_t *offset) {
     char msg[] ="Ack\n";
@@ -49,13 +50,26 @@ ssize_t shov_read(struct file *filp, char __user *buf, size_t count, loff_t *off
     return len;
 }
 
+
+ssize_t shov_write(struct file *filp, const char __user *buf, size_t count, loff_t *offset) {
+    size_t len = min(count, sizeof(kernel_buf) - 1);
+    int result = copy_from_user(kernel_buf, buf, len);
+    if (result)
+        return -EFAULT;
+    kernel_buf[len] = '\0';
+    printk("shov_write: received: %s\n", kernel_buf);
+    return len;
+}
+
+
 struct proc_ops driver_proc_ops = {
-    .proc_read = shov_read
+    .proc_read = shov_read,
+    .proc_write = shov_write
 };
 
 static int shov_module_init(void) {
     printk("Entry:Shov_driver\n");
-    custom_proc_node = proc_create("shov_driver",0,NULL,&driver_proc_ops);
+    custom_proc_node = proc_create("shov_driver",0666,NULL,&driver_proc_ops);
     if (custom_proc_node == NULL) {
         printk("shov_module_init:Error\n");
         return -1;
