@@ -1,0 +1,10 @@
+/gpioserdev-driver
+*.cmd
+*.mod
+*.mod.c
+*.o
+*.ko
+*.order
+*.symvers
+*.tar.gz
+.vscode/
