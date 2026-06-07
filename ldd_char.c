@@ -3,19 +3,26 @@
  *  chardev.c: Creates a read-only char device that says how many times
  *  you've read from the dev file
  */
-
-#include <linux/kernel.h>
 #include <linux/module.h>
+#include <linux/kernel.h>
+#include <linux/init.h>
+#include <linux/string.h>
 #include <linux/fs.h>
-#include <linux/uaccess.h>	/* for put_user */
+#include <linux/cdev.h>
+#include <linux/uaccess.h>
+#include <linux/delay.h>
+#include <linux/ioctl.h>
+#include <linux/of.h>
+#include <linux/serdev.h>
+
 
 MODULE_LICENSE("GPL");
 
 /*  
  *  Prototypes - this would normally go in a .h file
  */
-int init_module(void);
-void cleanup_module(void);
+
+
 static int device_open(struct inode *, struct file *);
 static int device_release(struct inode *, struct file *);
 static ssize_t device_read(struct file *, char *, size_t, loff_t *);
@@ -30,6 +37,7 @@ static ssize_t device_write(struct file *, const char *, size_t, loff_t *);
  */
 
 static int Major;		/* Major number assigned to our device driver */
+static struct serdev_device *somo_serdev;  /* saved in probe, used in write */
 static int Device_Open = 0;	/* Is device open?  
 				 * Used to prevent multiple access to device */
 static char msg[BUF_LEN];	/* The msg the device will give when asked */
@@ -42,38 +50,73 @@ static struct file_operations fops = {
 	.release = device_release
 };
 
-/*
- * This function is called when the module is loaded
- */
-int init_module(void)
-{
-        Major = register_chrdev(0, DEVICE_NAME, &fops);
 
+static size_t somo_receive_buf(struct serdev_device *serdev,
+                               const u8 *buf,
+                               size_t count)
+{
+    // buf   = bytes just received from hardware
+    // count = how many bytes arrived
+
+    // for now just print them
+    printk("somo: received %zu bytes: %*ph\n", count, (int)count, buf);
+
+    return count;  // tell serdev how many bytes you consumed
+}
+
+static const struct serdev_device_ops somo_ops = {
+    .receive_buf  = somo_receive_buf,    // called when UART receives bytes
+    .write_wakeup = serdev_device_write_wakeup,  // called when TX buffer has space
+};
+
+
+static const struct of_device_id somo_of_match[] = {
+    { .compatible = "sample,ldd" },   // matches your DTS
+    {}
+};
+
+
+static int somo_probe(struct serdev_device *serdev)
+{
+    somo_serdev = serdev;  // save globally so device_write can use it
+    serdev_device_set_drvdata(serdev, NULL);
+    serdev_device_set_client_ops(serdev, &somo_ops);  // register receive_buf
+
+    // open and configure the UART
+    serdev_device_open(serdev);
+    serdev_device_set_baudrate(serdev, 9600);
+    serdev_device_set_flow_control(serdev, false);
+
+	Major = register_chrdev(0, DEVICE_NAME, &fops);
 	if (Major < 0) {
-	  printk(KERN_ALERT "Registering char device failed with %d\n", Major);
 	  return Major;
 	}
 
-	printk(KERN_INFO "I was assigned major number %d. To talk to\n", Major);
-	printk(KERN_INFO "the driver, create a dev file with\n");
-	printk(KERN_INFO "'mknod /dev/%s c %d 0'.\n", DEVICE_NAME, Major);
-	printk(KERN_INFO "Try various minor numbers. Try to cat and echo to\n");
-	printk(KERN_INFO "the device file.\n");
-	printk(KERN_INFO "Remove the device file and module when done.\n");
-
-	return SUCCESS;
+    printk("somo: probed\n");
+    return 0;
 }
 
-/*
- * This function is called when the module is unloaded
- */
-void cleanup_module(void)
+static void somo_remove(struct serdev_device *serdev)
 {
-	/* 
-	 * Unregister the device 
-	 */
-	unregister_chrdev(Major, DEVICE_NAME);
+    unregister_chrdev(Major, DEVICE_NAME);
+    serdev_device_close(serdev);
+    printk("somo: removed\n");
 }
+
+static struct serdev_device_driver somo_driver = {
+    .probe  = somo_probe,
+    .remove = somo_remove,
+    .driver = {
+        .name           = "somo",
+        .of_match_table = somo_of_match,
+    },
+};
+
+
+module_serdev_device_driver(somo_driver);
+
+
+
 
 /*
  * Methods
@@ -161,9 +204,16 @@ static ssize_t device_read(struct file *filp,	/* see include/linux/fs.h   */
 /*  
  * Called when a process writes to dev file: echo "hi" > /dev/hello 
  */
-static ssize_t
-device_write(struct file *filp, const char *buff, size_t len, loff_t * off)
-{
-	printk(KERN_ALERT "Sorry, this operation isn't supported.\n");
-	return -EINVAL;
+static ssize_t device_write(struct file *filp, const char *buff, size_t len, loff_t * off)
+{  
+	
+	int to_copy, not_copied, delta;
+char kbuf[256];
+	to_copy = min(len, sizeof(kbuf));
+	not_copied = copy_from_user(kbuf, buff, to_copy);
+	if (not_copied)
+		return -EFAULT;
+	serdev_device_write(somo_serdev, kbuf, to_copy, HZ);
+	delta = to_copy - not_copied;
+	return delta;
 }

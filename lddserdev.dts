@@ -1,0 +1,21 @@
+/dts-v1/;
+/plugin/;
+
+/ {
+    compatible = "brcm,bcm2835";
+
+    fragment@0 {
+        target = <&uart0>;
+        __overlay__ {
+            status = "okay";
+            #address-cells = <1>;
+            #size-cells = <0>;
+
+            somo@0 {
+                compatible = "sample,ldd";
+                reg = <0>;
+                current-speed = <9600>;
+            };
+        };
+    };
+};
